@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { taskProofs, tasks } from '@/db/schema';
+import { taskProofs, users, tasks, applications } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 
-export async function PATCH(
+export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -22,27 +22,23 @@ export async function PATCH(
     }
 
     const proofId = parseInt(id);
-    const body = await request.json();
-    const { verified } = body;
 
-    if (typeof verified !== 'boolean') {
-      return NextResponse.json(
-        { 
-          error: "Verified must be a boolean value",
-          code: "INVALID_VERIFIED" 
-        },
-        { status: 400 }
-      );
-    }
-
-    // Check if proof exists
-    const existingProof = await db
-      .select()
+    // Query with JOINs to get enriched proof data
+    const result = await db
+      .select({
+        proof: taskProofs,
+        laborer: users,
+        task: tasks,
+        application: applications
+      })
       .from(taskProofs)
+      .innerJoin(users, eq(taskProofs.laborerId, users.id))
+      .innerJoin(tasks, eq(taskProofs.taskId, tasks.id))
+      .innerJoin(applications, eq(taskProofs.applicationId, applications.id))
       .where(eq(taskProofs.id, proofId))
       .limit(1);
 
-    if (existingProof.length === 0) {
+    if (result.length === 0) {
       return NextResponse.json(
         { 
           error: 'Task proof not found',
@@ -52,24 +48,17 @@ export async function PATCH(
       );
     }
 
-    const proof = existingProof[0];
+    const { proof, laborer, task, application } = result[0];
 
-    // If verified, update task status to 'verified'
-    if (verified) {
-      await db
-        .update(tasks)
-        .set({ status: 'verified' })
-        .where(eq(tasks.id, proof.taskId));
-    }
-
-    return NextResponse.json({ 
-      success: true,
-      message: 'Task verified successfully',
-      taskId: proof.taskId
+    return NextResponse.json({
+      proof,
+      laborer,
+      task,
+      application
     }, { status: 200 });
 
   } catch (error) {
-    console.error('PATCH verify error:', error);
+    console.error('GET error:', error);
     return NextResponse.json(
       { 
         error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error')

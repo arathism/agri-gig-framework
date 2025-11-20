@@ -120,8 +120,8 @@ export default function LaborerDashboard() {
 
   useEffect(() => {
     fetchData();
-    // Poll for updates every 5 seconds
-    const interval = setInterval(fetchData, 5000);
+    // Poll for updates every 30 seconds (reduced from 5 seconds to prevent reload loop)
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
 
