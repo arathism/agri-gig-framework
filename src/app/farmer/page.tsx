@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { Button } from '@/components/ui/button';
@@ -8,92 +8,117 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Sprout, Plus, Clock, CheckCircle, Award, MapPin, AlertCircle, Image as ImageIcon, Home } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Sprout, Plus, Clock, CheckCircle, Award, MapPin, AlertCircle, Image as ImageIcon, Home, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
+import { toast } from 'sonner';
 
 type JobStatus = 'open' | 'inProgress' | 'completed' | 'verified';
 
 interface MicroGig {
-  id: string;
+  id: number;
+  farmerId: number;
   taskName: string;
   description: string;
   category: string;
   location: string;
   reward: number;
   duration: number;
-  requirements: string;
+  requirements: string | null;
   status: JobStatus;
-  applicants: number;
-  proofUploaded?: boolean;
   createdAt: string;
+  applicants?: number;
+  proofUploaded?: boolean;
 }
 
 export default function FarmerDashboard() {
   const { t } = useLanguage();
   const router = useRouter();
-  const [jobs, setJobs] = useState<MicroGig[]>([
-    {
-      id: '1',
-      taskName: 'Organic Weeding - North Field',
-      description: 'Remove weeds from 2 acres using manual methods only',
-      category: 'weeding',
-      location: 'Bangalore Rural, Karnataka',
-      reward: 500,
-      duration: 4,
-      requirements: 'Experience with organic methods',
-      status: 'open',
-      applicants: 3,
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '2',
-      taskName: 'Compost Preparation',
-      description: 'Prepare organic compost from farm waste',
-      category: 'composting',
-      location: 'Bangalore Rural, Karnataka',
-      reward: 300,
-      duration: 2,
-      requirements: 'Knowledge of composting',
-      status: 'inProgress',
-      applicants: 1,
-      createdAt: '2024-01-14'
-    },
-    {
-      id: '3',
-      taskName: 'Drip Irrigation Setup',
-      description: 'Install drip irrigation system in vegetable patch',
-      category: 'irrigation',
-      location: 'Bangalore Rural, Karnataka',
-      reward: 800,
-      duration: 6,
-      requirements: 'Technical skills required',
-      status: 'completed',
-      applicants: 1,
-      proofUploaded: true,
-      createdAt: '2024-01-13'
-    }
-  ]);
-
+  const [jobs, setJobs] = useState<MicroGig[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
 
-  const onSubmit = (data: any) => {
-    const newJob: MicroGig = {
-      id: Date.now().toString(),
-      ...data,
-      reward: parseFloat(data.reward),
-      duration: parseFloat(data.duration),
-      status: 'open',
-      applicants: 0,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-    setJobs([newJob, ...jobs]);
-    setIsCreateDialogOpen(false);
-    reset();
+  // Using mock farmer ID - in production, get from auth session
+  const FARMER_ID = 1;
+
+  const fetchJobs = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch(`/api/tasks?farmer_id=${FARMER_ID}`);
+      if (!response.ok) throw new Error('Failed to fetch tasks');
+      const data = await response.json();
+      
+      // Fetch applications count for each task
+      const jobsWithApplicants = await Promise.all(
+        data.map(async (job: MicroGig) => {
+          const appsResponse = await fetch(`/api/applications?task_id=${job.id}`);
+          const apps = await appsResponse.json();
+          
+          // Check if proof uploaded
+          const proofsResponse = await fetch(`/api/task-proofs?task_id=${job.id}`);
+          const proofs = await proofsResponse.json();
+          
+          return {
+            ...job,
+            applicants: apps.length,
+            proofUploaded: proofs.length > 0
+          };
+        })
+      );
+      
+      setJobs(jobsWithApplicants);
+    } catch (error) {
+      console.error('Error fetching jobs:', error);
+      toast.error('Failed to load tasks');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchJobs();
+    // Poll for updates every 5 seconds
+    const interval = setInterval(fetchJobs, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const onSubmit = async (data: any) => {
+    try {
+      setIsCreating(true);
+      const response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          farmerId: FARMER_ID,
+          taskName: data.taskName,
+          description: data.description,
+          category: data.category,
+          location: data.location,
+          reward: parseFloat(data.reward),
+          duration: parseFloat(data.duration),
+          requirements: data.requirements || null
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create task');
+      }
+
+      toast.success('Task created successfully!');
+      setIsCreateDialogOpen(false);
+      reset();
+      fetchJobs(); // Refresh list
+    } catch (error) {
+      console.error('Error creating task:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to create task');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const getStatusBadge = (status: JobStatus) => {
@@ -107,10 +132,40 @@ export default function FarmerDashboard() {
     return <Badge variant={statusConfig[status].variant}>{statusConfig[status].label}</Badge>;
   };
 
-  const handleVerify = (jobId: string) => {
-    setJobs(jobs.map(job => 
-      job.id === jobId ? { ...job, status: 'verified' as JobStatus } : job
-    ));
+  const handleVerify = async (jobId: number) => {
+    try {
+      // Verify the proof
+      const proofsResponse = await fetch(`/api/task-proofs?task_id=${jobId}`);
+      const proofs = await proofsResponse.json();
+      
+      if (proofs.length === 0) {
+        toast.error('No proof found to verify');
+        return;
+      }
+
+      const verifyResponse = await fetch(`/api/task-proofs/${proofs[0].id}/verify`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verified: true })
+      });
+
+      if (!verifyResponse.ok) throw new Error('Failed to verify proof');
+
+      // Update task status to verified
+      const taskResponse = await fetch(`/api/tasks/${jobId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'verified' })
+      });
+
+      if (!taskResponse.ok) throw new Error('Failed to update task status');
+
+      toast.success('Task verified and reward approved!');
+      fetchJobs(); // Refresh list
+    } catch (error) {
+      console.error('Error verifying task:', error);
+      toast.error('Failed to verify task');
+    }
   };
 
   const stats = {
@@ -118,6 +173,14 @@ export default function FarmerDashboard() {
     pendingVerification: jobs.filter(j => j.status === 'completed').length,
     rewardsDistributed: jobs.filter(j => j.status === 'verified').reduce((sum, j) => sum + j.reward, 0)
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-green-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -270,8 +333,19 @@ export default function FarmerDashboard() {
                   />
                 </div>
 
-                <Button type="submit" className="w-full bg-green-600 hover:bg-green-700">
-                  {t.farmer.jobForm.createButton}
+                <Button 
+                  type="submit" 
+                  className="w-full bg-green-600 hover:bg-green-700"
+                  disabled={isCreating}
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    t.farmer.jobForm.createButton
+                  )}
                 </Button>
               </form>
             </DialogContent>
@@ -281,64 +355,72 @@ export default function FarmerDashboard() {
         {/* Jobs List */}
         <div className="space-y-4">
           <h2 className="text-2xl font-bold">{t.farmer.activeJobs}</h2>
-          {jobs.map((job) => (
-            <Card key={job.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <CardTitle className="text-xl">{job.taskName}</CardTitle>
-                    <CardDescription className="flex items-center gap-4 text-sm">
-                      <span className="flex items-center gap-1">
-                        <MapPin className="h-3 w-3" />
-                        {job.location}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {job.duration}{t.farmer.jobDetails.hours}
-                      </span>
-                    </CardDescription>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    {getStatusBadge(job.status)}
-                    <span className="text-2xl font-bold text-green-600">₹{job.reward}</span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm mb-4">{job.description}</p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    <span>{job.applicants} {t.farmer.jobDetails.applicants}</span>
-                    {job.proofUploaded && (
-                      <Badge variant="secondary" className="gap-1">
-                        <ImageIcon className="h-3 w-3" />
-                        {t.farmer.verification.proofUploaded}
-                      </Badge>
-                    )}
-                  </div>
-                  {job.status === 'completed' && job.proofUploaded && (
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {}}
-                      >
-                        {t.farmer.verification.viewProof}
-                      </Button>
-                      <Button
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700"
-                        onClick={() => handleVerify(job.id)}
-                      >
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        {t.farmer.verification.approve}
-                      </Button>
-                    </div>
-                  )}
-                </div>
+          {jobs.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <p className="text-muted-foreground">No tasks created yet</p>
               </CardContent>
             </Card>
-          ))}
+          ) : (
+            jobs.map((job) => (
+              <Card key={job.id} className="hover:shadow-lg transition-shadow">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <CardTitle className="text-xl">{job.taskName}</CardTitle>
+                      <CardDescription className="flex items-center gap-4 text-sm">
+                        <span className="flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {job.location}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {job.duration}{t.farmer.jobDetails.hours}
+                        </span>
+                      </CardDescription>
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      {getStatusBadge(job.status)}
+                      <span className="text-2xl font-bold text-green-600">₹{job.reward}</span>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm mb-4">{job.description}</p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                      <span>{job.applicants || 0} {t.farmer.jobDetails.applicants}</span>
+                      {job.proofUploaded && (
+                        <Badge variant="secondary" className="gap-1">
+                          <ImageIcon className="h-3 w-3" />
+                          {t.farmer.verification.proofUploaded}
+                        </Badge>
+                      )}
+                    </div>
+                    {job.status === 'completed' && job.proofUploaded && (
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {}}
+                        >
+                          {t.farmer.verification.viewProof}
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700"
+                          onClick={() => handleVerify(job.id)}
+                        >
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                          {t.farmer.verification.approve}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
         </div>
       </div>
     </div>

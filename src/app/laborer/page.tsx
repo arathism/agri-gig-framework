@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { Button } from '@/components/ui/button';
@@ -11,23 +11,44 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, Search, MapPin, Clock, Award, CheckCircle, Upload, Home, Camera, Wallet } from 'lucide-react';
+import { Users, Search, MapPin, Clock, Award, CheckCircle, Upload, Home, Camera, Wallet, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
-type ApplicationStatus = 'available' | 'applied' | 'working' | 'submitted' | 'verified';
+type TaskStatus = 'open' | 'inProgress' | 'completed' | 'verified';
+type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'started' | 'completed';
 
-interface Gig {
-  id: string;
+interface Task {
+  id: number;
+  farmerId: number;
   taskName: string;
   description: string;
   category: string;
   location: string;
   reward: number;
   duration: number;
-  farmerName: string;
-  distance: string;
-  postedDate: string;
+  requirements: string | null;
+  status: TaskStatus;
+  createdAt: string;
+}
+
+interface Application {
+  id: number;
+  taskId: number;
+  laborerId: number;
   status: ApplicationStatus;
+  appliedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  task: Task;
+}
+
+interface Gig extends Task {
+  farmerName?: string;
+  distance?: string;
+  postedDate?: string;
+  applicationStatus?: ApplicationStatus;
+  applicationId?: number;
 }
 
 export default function LaborerDashboard() {
@@ -37,131 +58,254 @@ export default function LaborerDashboard() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isProofDialogOpen, setIsProofDialogOpen] = useState(false);
   const [selectedGig, setSelectedGig] = useState<Gig | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  const [availableGigs, setAvailableGigs] = useState<Gig[]>([]);
+  const [myApplications, setMyApplications] = useState<Gig[]>([]);
+  const [proofNotes, setProofNotes] = useState('');
 
-  const [gigs, setGigs] = useState<Gig[]>([
-    {
-      id: '1',
-      taskName: 'Organic Weeding - North Field',
-      description: 'Remove weeds from 2 acres using manual methods only. Must follow organic farming practices.',
-      category: 'weeding',
-      location: 'Bangalore Rural, Karnataka',
-      reward: 500,
-      duration: 4,
-      farmerName: 'Ramesh Kumar',
-      distance: '3.2 km',
-      postedDate: '2h ago',
-      status: 'available'
-    },
-    {
-      id: '2',
-      taskName: 'Drip Irrigation Maintenance',
-      description: 'Check and clean drip irrigation system, replace damaged pipes',
-      category: 'irrigation',
-      location: 'Bangalore Rural, Karnataka',
-      reward: 400,
-      duration: 3,
-      farmerName: 'Lakshmi Devi',
-      distance: '5.1 km',
-      postedDate: '5h ago',
-      status: 'available'
-    },
-    {
-      id: '3',
-      taskName: 'Compost Preparation',
-      description: 'Prepare organic compost from farm waste',
-      category: 'composting',
-      location: 'Bangalore Rural, Karnataka',
-      reward: 300,
-      duration: 2,
-      farmerName: 'Suresh Patil',
-      distance: '1.8 km',
-      postedDate: '1d ago',
-      status: 'working'
-    },
-    {
-      id: '4',
-      taskName: 'Natural Pest Control Application',
-      description: 'Apply neem-based pest control solution to vegetable crops',
-      category: 'pestControl',
-      location: 'Bangalore Rural, Karnataka',
-      reward: 350,
-      duration: 2.5,
-      farmerName: 'Gowda',
-      distance: '4.5 km',
-      postedDate: '2d ago',
-      status: 'applied'
+  // Using mock laborer ID - in production, get from auth session
+  const LABORER_ID = 2;
+
+  const fetchAvailableGigs = async () => {
+    try {
+      const response = await fetch('/api/tasks?status=open');
+      if (!response.ok) throw new Error('Failed to fetch tasks');
+      const tasks: Task[] = await response.json();
+      
+      // Transform to Gig format
+      const gigs: Gig[] = tasks.map(task => ({
+        ...task,
+        distance: '3.2 km', // Mock data - would come from geolocation in production
+        postedDate: getRelativeTime(task.createdAt),
+        farmerName: 'Farmer' // Mock - would be joined from users table
+      }));
+      
+      setAvailableGigs(gigs);
+    } catch (error) {
+      console.error('Error fetching available gigs:', error);
+      toast.error('Failed to load available tasks');
     }
-  ]);
-
-  const handleApply = (gigId: string) => {
-    setGigs(gigs.map(gig => 
-      gig.id === gigId ? { ...gig, status: 'applied' } : gig
-    ));
   };
 
-  const handleStartWork = (gigId: string) => {
-    setGigs(gigs.map(gig => 
-      gig.id === gigId ? { ...gig, status: 'working' } : gig
-    ));
+  const fetchMyApplications = async () => {
+    try {
+      const response = await fetch(`/api/applications?laborer_id=${LABORER_ID}`);
+      if (!response.ok) throw new Error('Failed to fetch applications');
+      const applications: Application[] = await response.json();
+      
+      // Transform to Gig format
+      const gigs: Gig[] = applications.map(app => ({
+        ...app.task,
+        applicationStatus: app.status,
+        applicationId: app.id,
+        distance: '3.2 km',
+        postedDate: getRelativeTime(app.appliedAt),
+        farmerName: 'Farmer'
+      }));
+      
+      setMyApplications(gigs);
+    } catch (error) {
+      console.error('Error fetching applications:', error);
+      toast.error('Failed to load your applications');
+    }
   };
 
-  const handleSubmitProof = (gigId: string) => {
-    setGigs(gigs.map(gig => 
-      gig.id === gigId ? { ...gig, status: 'submitted' } : gig
-    ));
-    setIsProofDialogOpen(false);
+  const fetchData = async () => {
+    setIsLoading(true);
+    await Promise.all([fetchAvailableGigs(), fetchMyApplications()]);
+    setIsLoading(false);
   };
 
-  const myApplications = gigs.filter(g => ['applied', 'working', 'submitted', 'verified'].includes(g.status));
-  const availableGigs = gigs.filter(g => g.status === 'available');
+  useEffect(() => {
+    fetchData();
+    // Poll for updates every 5 seconds
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const stats = {
-    totalEarnings: gigs.filter(g => g.status === 'verified').reduce((sum, g) => sum + g.reward, 0),
-    completedTasks: gigs.filter(g => g.status === 'verified').length,
-    pendingVerification: gigs.filter(g => g.status === 'submitted').length,
+  const getRelativeTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return `${diffDays}d ago`;
+  };
+
+  const handleApply = async (taskId: number) => {
+    try {
+      const response = await fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          laborerId: LABORER_ID
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        if (error.code === 'DUPLICATE_APPLICATION') {
+          toast.error('You have already applied to this task');
+        } else {
+          throw new Error(error.error || 'Failed to apply');
+        }
+        return;
+      }
+
+      toast.success('Application submitted successfully!');
+      fetchData(); // Refresh lists
+    } catch (error) {
+      console.error('Error applying:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to apply to task');
+    }
+  };
+
+  const handleStartWork = async (applicationId: number) => {
+    try {
+      const response = await fetch(`/api/applications/${applicationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'started' })
+      });
+
+      if (!response.ok) throw new Error('Failed to start work');
+
+      toast.success('Work started! Good luck!');
+      fetchData(); // Refresh lists
+    } catch (error) {
+      console.error('Error starting work:', error);
+      toast.error('Failed to start work');
+    }
+  };
+
+  const handleSubmitProof = async () => {
+    if (!selectedGig || !selectedGig.applicationId) return;
+
+    try {
+      setIsSubmitting(true);
+
+      // Submit proof
+      const proofResponse = await fetch('/api/task-proofs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          applicationId: selectedGig.applicationId,
+          taskId: selectedGig.id,
+          laborerId: LABORER_ID,
+          photos: [], // Mock - would upload photos in production
+          notes: proofNotes,
+          locationLat: null,
+          locationLng: null
+        })
+      });
+
+      if (!proofResponse.ok) throw new Error('Failed to submit proof');
+
+      // Update application status to completed
+      const appResponse = await fetch(`/api/applications/${selectedGig.applicationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed' })
+      });
+
+      if (!appResponse.ok) throw new Error('Failed to update application');
+
+      toast.success('Proof submitted! Waiting for farmer verification.');
+      setIsProofDialogOpen(false);
+      setProofNotes('');
+      fetchData(); // Refresh lists
+    } catch (error) {
+      console.error('Error submitting proof:', error);
+      toast.error('Failed to submit proof');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getStatusButton = (gig: Gig) => {
-    switch (gig.status) {
-      case 'available':
-        return (
-          <Button 
-            className="bg-green-600 hover:bg-green-700"
-            onClick={() => handleApply(gig.id)}
-          >
-            {t.laborer.application.applyButton}
-          </Button>
-        );
-      case 'applied':
-        return (
-          <div className="flex gap-2">
-            <Badge variant="secondary">{t.laborer.application.applied}</Badge>
+    // Check if already applied
+    const hasApplication = myApplications.some(app => app.id === gig.id);
+    
+    if (hasApplication) {
+      const application = myApplications.find(app => app.id === gig.id);
+      
+      switch (application?.applicationStatus) {
+        case 'pending':
+          return (
+            <div className="flex gap-2">
+              <Badge variant="secondary">{t.laborer.application.applied}</Badge>
+              <Button 
+                size="sm"
+                onClick={() => application.applicationId && handleStartWork(application.applicationId)}
+              >
+                {t.laborer.application.startWork}
+              </Button>
+            </div>
+          );
+        case 'accepted':
+        case 'started':
+          return (
             <Button 
-              size="sm"
-              onClick={() => handleStartWork(gig.id)}
+              onClick={() => {
+                setSelectedGig(application);
+                setIsProofDialogOpen(true);
+              }}
             >
-              {t.laborer.application.startWork}
+              <Upload className="mr-2 h-4 w-4" />
+              {t.laborer.application.submitProof}
             </Button>
-          </div>
-        );
-      case 'working':
-        return (
-          <Button 
-            onClick={() => {
-              setSelectedGig(gig);
-              setIsProofDialogOpen(true);
-            }}
-          >
-            <Upload className="mr-2 h-4 w-4" />
-            {t.laborer.application.submitProof}
-          </Button>
-        );
-      case 'submitted':
-        return <Badge variant="outline">Pending Verification</Badge>;
-      case 'verified':
-        return <Badge className="bg-green-600"><CheckCircle className="mr-1 h-3 w-3" />Verified</Badge>;
+          );
+        case 'completed':
+          return <Badge variant="outline">Pending Verification</Badge>;
+        default:
+          return null;
+      }
     }
+
+    // Show apply button for available tasks
+    if (gig.status === 'open') {
+      return (
+        <Button 
+          className="bg-green-600 hover:bg-green-700"
+          onClick={() => handleApply(gig.id)}
+        >
+          {t.laborer.application.applyButton}
+        </Button>
+      );
+    }
+
+    return null;
   };
+
+  const stats = {
+    totalEarnings: myApplications
+      .filter(g => g.status === 'verified')
+      .reduce((sum, g) => sum + g.reward, 0),
+    completedTasks: myApplications.filter(g => g.status === 'verified').length,
+    pendingVerification: myApplications.filter(g => g.applicationStatus === 'completed').length,
+  };
+
+  const filteredGigs = availableGigs.filter(gig => {
+    const matchesSearch = gig.taskName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         gig.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = selectedCategory === 'all' || gig.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-green-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -226,7 +370,7 @@ export default function LaborerDashboard() {
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">₹{gigs.filter(g => g.status === 'submitted').reduce((sum, g) => sum + g.reward, 0)}</div>
+              <div className="text-2xl font-bold">₹{myApplications.filter(g => g.applicationStatus === 'completed').reduce((sum, g) => sum + g.reward, 0)}</div>
             </CardContent>
           </Card>
         </div>
@@ -265,39 +409,47 @@ export default function LaborerDashboard() {
 
             {/* Available Gigs */}
             <div className="space-y-4">
-              {availableGigs.map((gig) => (
-                <Card key={gig.id} className="hover:shadow-lg transition-shadow">
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1 flex-1">
-                        <CardTitle className="text-xl">{gig.taskName}</CardTitle>
-                        <CardDescription className="flex flex-wrap items-center gap-3 text-sm">
-                          <span className="flex items-center gap-1">
-                            <MapPin className="h-3 w-3" />
-                            {gig.distance}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {gig.duration}h
-                          </span>
-                          <span className="text-muted-foreground">{gig.postedDate}</span>
-                        </CardDescription>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-green-600">₹{gig.reward}</div>
-                        <p className="text-xs text-muted-foreground">{gig.farmerName}</p>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm mb-4">{gig.description}</p>
-                    <div className="flex items-center justify-between">
-                      <Badge variant="outline">{gig.location}</Badge>
-                      {getStatusButton(gig)}
-                    </div>
+              {filteredGigs.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <p className="text-muted-foreground">No available tasks at the moment</p>
                   </CardContent>
                 </Card>
-              ))}
+              ) : (
+                filteredGigs.map((gig) => (
+                  <Card key={gig.id} className="hover:shadow-lg transition-shadow">
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1 flex-1">
+                          <CardTitle className="text-xl">{gig.taskName}</CardTitle>
+                          <CardDescription className="flex flex-wrap items-center gap-3 text-sm">
+                            <span className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              {gig.distance}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {gig.duration}h
+                            </span>
+                            <span className="text-muted-foreground">{gig.postedDate}</span>
+                          </CardDescription>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold text-green-600">₹{gig.reward}</div>
+                          <p className="text-xs text-muted-foreground">{gig.farmerName}</p>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm mb-4">{gig.description}</p>
+                      <div className="flex items-center justify-between">
+                        <Badge variant="outline">{gig.location}</Badge>
+                        {getStatusButton(gig)}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
             </div>
           </TabsContent>
 
@@ -328,6 +480,11 @@ export default function LaborerDashboard() {
                       </div>
                       <div className="text-right">
                         <div className="text-2xl font-bold text-green-600">₹{gig.reward}</div>
+                        {gig.status === 'verified' && (
+                          <Badge className="bg-green-600 mt-1">
+                            <CheckCircle className="mr-1 h-3 w-3" />Verified
+                          </Badge>
+                        )}
                       </div>
                     </div>
                   </CardHeader>
@@ -369,6 +526,8 @@ export default function LaborerDashboard() {
               <Textarea
                 placeholder={t.laborer.application.uploadProof.notesPlaceholder}
                 rows={4}
+                value={proofNotes}
+                onChange={(e) => setProofNotes(e.target.value)}
               />
             </div>
 
@@ -382,10 +541,20 @@ export default function LaborerDashboard() {
 
             <Button 
               className="w-full bg-green-600 hover:bg-green-700"
-              onClick={() => selectedGig && handleSubmitProof(selectedGig.id)}
+              onClick={handleSubmitProof}
+              disabled={isSubmitting}
             >
-              <CheckCircle className="mr-2 h-4 w-4" />
-              {t.laborer.application.uploadProof.submit}
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  {t.laborer.application.uploadProof.submit}
+                </>
+              )}
             </Button>
           </div>
         </DialogContent>
