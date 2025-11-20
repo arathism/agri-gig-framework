@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, Search, MapPin, Clock, Award, CheckCircle, Upload, Home, Camera, Wallet, Loader2 } from 'lucide-react';
+import { Users, Search, MapPin, Clock, Award, CheckCircle, Upload, Home, Camera, Wallet, Loader2, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -64,6 +64,8 @@ export default function LaborerDashboard() {
   const [availableGigs, setAvailableGigs] = useState<Gig[]>([]);
   const [myApplications, setMyApplications] = useState<Gig[]>([]);
   const [proofNotes, setProofNotes] = useState('');
+  const [proofPhotos, setProofPhotos] = useState<string[]>([]);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
   // Using mock laborer ID - in production, get from auth session
   const LABORER_ID = 2;
@@ -185,8 +187,60 @@ export default function LaborerDashboard() {
     }
   };
 
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploadingPhoto(true);
+    try {
+      const newPhotos: string[] = [];
+      
+      for (let i = 0; i < Math.min(files.length, 5); i++) {
+        const file = files[i];
+        
+        // Validate file type
+        if (!file.type.startsWith('image/')) {
+          toast.error(`${file.name} is not an image file`);
+          continue;
+        }
+        
+        // Validate file size (max 5MB)
+        if (file.size > 5 * 1024 * 1024) {
+          toast.error(`${file.name} is too large. Max size is 5MB`);
+          continue;
+        }
+        
+        // Convert to base64
+        const reader = new FileReader();
+        const base64 = await new Promise<string>((resolve) => {
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.readAsDataURL(file);
+        });
+        
+        newPhotos.push(base64);
+      }
+      
+      setProofPhotos(prev => [...prev, ...newPhotos].slice(0, 5));
+      toast.success(`${newPhotos.length} photo(s) added`);
+    } catch (error) {
+      console.error('Error uploading photos:', error);
+      toast.error('Failed to upload photos');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
+
+  const removePhoto = (index: number) => {
+    setProofPhotos(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSubmitProof = async () => {
     if (!selectedGig || !selectedGig.applicationId) return;
+
+    if (proofPhotos.length === 0) {
+      toast.error('Please upload at least one photo as proof');
+      return;
+    }
 
     try {
       setIsSubmitting(true);
@@ -199,7 +253,7 @@ export default function LaborerDashboard() {
           applicationId: selectedGig.applicationId,
           taskId: selectedGig.id,
           laborerId: LABORER_ID,
-          photos: [], // Mock - would upload photos in production
+          photos: proofPhotos,
           notes: proofNotes,
           locationLat: null,
           locationLng: null
@@ -220,6 +274,7 @@ export default function LaborerDashboard() {
       toast.success('Proof submitted! Waiting for farmer verification.');
       setIsProofDialogOpen(false);
       setProofNotes('');
+      setProofPhotos([]);
       fetchData(); // Refresh lists
     } catch (error) {
       console.error('Error submitting proof:', error);
@@ -504,7 +559,7 @@ export default function LaborerDashboard() {
 
       {/* Proof Upload Dialog */}
       <Dialog open={isProofDialogOpen} onOpenChange={setIsProofDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t.laborer.application.uploadProof.title}</DialogTitle>
             <DialogDescription>
@@ -514,11 +569,52 @@ export default function LaborerDashboard() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>{t.laborer.application.uploadProof.uploadPhotos}</Label>
-              <div className="border-2 border-dashed rounded-lg p-8 text-center hover:border-green-500 transition-colors cursor-pointer">
+              
+              {/* Photo Upload Area */}
+              <div 
+                className="border-2 border-dashed rounded-lg p-8 text-center hover:border-green-500 transition-colors cursor-pointer"
+                onClick={() => document.getElementById('photo-upload')?.click()}
+              >
                 <Camera className="h-12 w-12 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">Click to upload photos</p>
-                <Input type="file" className="hidden" accept="image/*" multiple />
+                <p className="text-sm text-muted-foreground mb-1">
+                  {isUploadingPhoto ? 'Uploading...' : 'Click to upload photos'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Max 5 photos, up to 5MB each
+                </p>
+                <Input 
+                  id="photo-upload"
+                  type="file" 
+                  className="hidden" 
+                  accept="image/*" 
+                  multiple 
+                  onChange={handlePhotoUpload}
+                  disabled={isUploadingPhoto || proofPhotos.length >= 5}
+                />
               </div>
+
+              {/* Photo Previews */}
+              {proofPhotos.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4">
+                  {proofPhotos.map((photo, index) => (
+                    <div key={index} className="relative group">
+                      <img 
+                        src={photo} 
+                        alt={`Proof ${index + 1}`}
+                        className="w-full h-32 object-cover rounded-lg border"
+                      />
+                      <Button
+                        size="icon"
+                        variant="destructive"
+                        className="absolute top-2 right-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => removePhoto(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -531,18 +627,10 @@ export default function LaborerDashboard() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>{t.laborer.application.uploadProof.location}</Label>
-              <Button variant="outline" className="w-full">
-                <MapPin className="mr-2 h-4 w-4" />
-                Capture Current Location
-              </Button>
-            </div>
-
             <Button 
               className="w-full bg-green-600 hover:bg-green-700"
               onClick={handleSubmitProof}
-              disabled={isSubmitting}
+              disabled={isSubmitting || proofPhotos.length === 0}
             >
               {isSubmitting ? (
                 <>

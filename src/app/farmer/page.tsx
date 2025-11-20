@@ -31,6 +31,26 @@ interface MicroGig {
   createdAt: string;
   applicants?: number;
   proofUploaded?: boolean;
+  proofData?: TaskProof | null;
+}
+
+interface TaskProof {
+  id: number;
+  applicationId: number;
+  taskId: number;
+  laborerId: number;
+  photos: string[];
+  notes: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
+  submittedAt: string;
+  laborer?: {
+    id: number;
+    name: string;
+    email: string;
+    phone: string;
+    location: string;
+  };
 }
 
 export default function FarmerDashboard() {
@@ -40,6 +60,9 @@ export default function FarmerDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isProofDialogOpen, setIsProofDialogOpen] = useState(false);
+  const [selectedProof, setSelectedProof] = useState<TaskProof | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
 
   // Using mock farmer ID - in production, get from auth session
@@ -52,8 +75,8 @@ export default function FarmerDashboard() {
       if (!response.ok) throw new Error('Failed to fetch tasks');
       const data = await response.json();
       
-      // Fetch applications count for each task
-      const jobsWithApplicants = await Promise.all(
+      // Fetch applications count and proofs for each task
+      const jobsWithDetails = await Promise.all(
         data.map(async (job: MicroGig) => {
           const appsResponse = await fetch(`/api/applications?task_id=${job.id}`);
           const apps = await appsResponse.json();
@@ -65,12 +88,13 @@ export default function FarmerDashboard() {
           return {
             ...job,
             applicants: apps.length,
-            proofUploaded: proofs.length > 0
+            proofUploaded: proofs.length > 0,
+            proofData: proofs.length > 0 ? proofs[0] : null
           };
         })
       );
       
-      setJobs(jobsWithApplicants);
+      setJobs(jobsWithDetails);
     } catch (error) {
       console.error('Error fetching jobs:', error);
       toast.error('Failed to load tasks');
@@ -81,8 +105,8 @@ export default function FarmerDashboard() {
 
   useEffect(() => {
     fetchJobs();
-    // Poll for updates every 5 seconds
-    const interval = setInterval(fetchJobs, 5000);
+    // Poll for updates every 30 seconds
+    const interval = setInterval(fetchJobs, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -132,18 +156,14 @@ export default function FarmerDashboard() {
     return <Badge variant={statusConfig[status].variant}>{statusConfig[status].label}</Badge>;
   };
 
-  const handleVerify = async (jobId: number) => {
-    try {
-      // Verify the proof
-      const proofsResponse = await fetch(`/api/task-proofs?task_id=${jobId}`);
-      const proofs = await proofsResponse.json();
-      
-      if (proofs.length === 0) {
-        toast.error('No proof found to verify');
-        return;
-      }
+  const handleViewProof = (proof: TaskProof) => {
+    setSelectedProof(proof);
+    setIsProofDialogOpen(true);
+  };
 
-      const verifyResponse = await fetch(`/api/task-proofs/${proofs[0].id}/verify`, {
+  const handleVerify = async (jobId: number, proofId: number) => {
+    try {
+      const verifyResponse = await fetch(`/api/task-proofs/${proofId}/verify`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ verified: true })
@@ -161,6 +181,8 @@ export default function FarmerDashboard() {
       if (!taskResponse.ok) throw new Error('Failed to update task status');
 
       toast.success('Task verified and reward approved!');
+      setIsProofDialogOpen(false);
+      setSelectedProof(null);
       fetchJobs(); // Refresh list
     } catch (error) {
       console.error('Error verifying task:', error);
@@ -397,19 +419,19 @@ export default function FarmerDashboard() {
                         </Badge>
                       )}
                     </div>
-                    {job.status === 'completed' && job.proofUploaded && (
+                    {job.status === 'completed' && job.proofUploaded && job.proofData && (
                       <div className="flex gap-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => {}}
+                          onClick={() => handleViewProof(job.proofData!)}
                         >
                           {t.farmer.verification.viewProof}
                         </Button>
                         <Button
                           size="sm"
                           className="bg-green-600 hover:bg-green-700"
-                          onClick={() => handleVerify(job.id)}
+                          onClick={() => handleVerify(job.id, job.proofData!.id)}
                         >
                           <CheckCircle className="mr-2 h-4 w-4" />
                           {t.farmer.verification.approve}
@@ -423,6 +445,99 @@ export default function FarmerDashboard() {
           )}
         </div>
       </div>
+
+      {/* Proof Viewing Dialog */}
+      <Dialog open={isProofDialogOpen} onOpenChange={setIsProofDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Task Completion Proof</DialogTitle>
+            <DialogDescription>
+              Review the submitted proof of work completion
+            </DialogDescription>
+          </DialogHeader>
+          {selectedProof && (
+            <div className="space-y-6">
+              {/* Laborer Info */}
+              {selectedProof.laborer && (
+                <div className="space-y-2">
+                  <h3 className="font-semibold">Laborer Information</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Name:</span>{' '}
+                      <span className="font-medium">{selectedProof.laborer.name}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Phone:</span>{' '}
+                      <span className="font-medium">{selectedProof.laborer.phone}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Email:</span>{' '}
+                      <span className="font-medium">{selectedProof.laborer.email}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Location:</span>{' '}
+                      <span className="font-medium">{selectedProof.laborer.location}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Photos */}
+              {selectedProof.photos && selectedProof.photos.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="font-semibold">Proof Photos</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {selectedProof.photos.map((photo, index) => (
+                      <div key={index} className="relative group">
+                        <img
+                          src={photo}
+                          alt={`Proof ${index + 1}`}
+                          className="w-full h-48 object-cover rounded-lg border cursor-pointer hover:opacity-90 transition-opacity"
+                          onClick={() => window.open(photo, '_blank')}
+                        />
+                        <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
+                          Photo {index + 1}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Notes */}
+              {selectedProof.notes && (
+                <div className="space-y-2">
+                  <h3 className="font-semibold">Notes from Laborer</h3>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-sm whitespace-pre-wrap">{selectedProof.notes}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Submission Time */}
+              <div className="text-sm text-muted-foreground">
+                Submitted on: {new Date(selectedProof.submittedAt).toLocaleString()}
+              </div>
+
+              {/* Verify Button */}
+              <Button
+                className="w-full bg-green-600 hover:bg-green-700"
+                onClick={() => {
+                  const job = jobs.find(j => j.id === selectedProof.taskId);
+                  if (job) {
+                    handleVerify(job.id, selectedProof.id);
+                  }
+                }}
+              >
+                <CheckCircle className="mr-2 h-4 w-4" />
+                Verify and Approve Reward
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
