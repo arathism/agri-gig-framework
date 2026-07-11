@@ -1,9 +1,13 @@
 # 🌾 AgriGig
 
-&gt; A platform that transforms sustainable farming practices into trackable micro-gigs. Farmers create tasks — from soil preparation to harvest — and laborers complete and verify them with photo and location-based proof, earning instant rewards.
+&gt; A platform that transforms sustainable farming practices into trackable micro-gigs. 
+&gt; Farmers create tasks — from soil preparation to harvest — and laborers complete 
+&gt; and verify them with photo and location-based proof, earning instant rewards.
 
-## 🔗 Live Project
-[https://agri-gig-framework.vercel.app/](https://agri-gig-framework.vercel.app/)
+## 🔗 Links
+
+- **Live Demo:** [https://agri-gig-framework.vercel.app/](https://agri-gig-framework.vercel.app/)
+- **LinkedIn Post:** [https://www.linkedin.com/posts/arathishekharmunavalli_codebharata-agritech-nextjs-activity-7397547204745433088-fOz0](https://www.linkedin.com/posts/arathishekharmunavalli_codebharata-agritech-nextjs-activity-7397547204745433088-fOz0)
 
 ## 🛠️ Tech Stack
 - Next.js
@@ -22,15 +26,15 @@
 | Rewards Distributed | ₹2.4L |
 | Active Farmers | 342 |
 
+## 🏆 Hackathon
+Selected among **Top 25 teams** out of **250+ teams** at **CodeBharata**, IIIT Dharwad.
+
 ## 👥 Team (5 Members)
 - Arathi Shekhar Munavalli
 - Aishwarya Patil
 - Harsh V Sanu
 - Bhoomika P Raikar
 - Akshata Nelagudda
-
-## 🏆 Hackathon
-Built at **CodeBharata** @ **IIIT Dharwad**
 
 ## 🚀 Getting Started
 
